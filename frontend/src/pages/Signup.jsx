@@ -1,93 +1,226 @@
-// src/pages/Signup.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
 import { motion } from "framer-motion";
-import { FaFacebook } from "react-icons/fa";
-import { FcGoogle } from "react-icons/fc";
+import ReCAPTCHA from "react-google-recaptcha";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+/** Google Login Button (Google Identity Services) */
+function GoogleLogin({ onSuccess, onError }) {
+  const btnRef = useRef(null);
+
+  useEffect(() => {
+    // Load the GIS SDK once
+    const scriptId = "google-identity-services";
+    if (!document.getElementById(scriptId)) {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true;
+      s.defer = true;
+      s.id = scriptId;
+      s.onload = init;
+      s.onerror = () => onError?.(new Error("Failed to load Google SDK"));
+      document.head.appendChild(s);
+    } else {
+      init();
+    }
+
+    function init() {
+      if (!window.google || !btnRef.current) return;
+      try {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: (response) => onSuccess?.(response.credential),
+          ux_mode: "popup", // or "redirect"
+          auto_select: false,
+          context: "signup",
+        });
+        window.google.accounts.id.renderButton(btnRef.current, {
+          theme: "outline",
+          size: "large",
+          type: "standard",
+          shape: "pill",
+          text: "continue_with", // "signup_with" also works
+          logo_alignment: "left",
+          width: "100%",
+        });
+      } catch (e) {
+        onError?.(e);
+      }
+    }
+  }, [onSuccess, onError]);
+
+  // Fallback button if render fails (rare)
+  return (
+    <div ref={btnRef} className="w-full">
+      <button
+        type="button"
+        onClick={() => onError?.(new Error("Google button not initialized"))}
+        className="w-full py-3 rounded-xl bg-white border border-gray-300 text-gray-800 font-medium shadow-sm"
+      >
+        Login with Google
+      </button>
+    </div>
+  );
+}
 
 export default function Signup() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [show1, setShow1] = useState(false);
-  const [show2, setShow2] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  // honor ?next= so invite flow resumes after auth
+  // form state
+  const [fullName, setFullName] = useState("");
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm,  setConfirm]  = useState("");
+  const [agree,    setAgree]    = useState(false);
+
+  // UI state
+  const [showPw1, setShowPw1] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errors,  setErrors]  = useState({});
+
+  // reCAPTCHA (frontend-only)
+  const [captchaToken, setCaptchaToken] = useState(null);
+
+  // Optional: honor ?next=/path so flow resumes post-auth
   const next = useMemo(() => {
     const p = new URLSearchParams(window.location.search);
     const n = p.get("next");
     return n && n.startsWith("/") ? n : "/";
   }, []);
 
-  // prefill email if ?email=foo@bar was passed from the invite
+  // Optional: prefill email from ?email=
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const e = p.get("email");
     if (e) setEmail(e);
   }, []);
 
-  const onSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    if (password !== confirm) {
-      setError("Passwords do not match");
+  // basic client-side validation
+  const validate = () => {
+    const e = {};
+    if (!fullName.trim()) e.fullName = "Full name is required.";
+    if (!email.trim()) e.email = "Email is required.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Enter a valid email.";
+    if (!password) e.password = "Password is required.";
+    else if (password.length < 8) e.password = "Use at least 8 characters.";
+    if (!confirm) e.confirm = "Please confirm your password.";
+    else if (confirm !== password) e.confirm = "Passwords do not match.";
+    if (!agree) e.agree = "You must accept the terms to continue.";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const onSubmit = async (ev) => {
+    ev.preventDefault();
+    if (!validate()) return;
+
+    // Frontend-only guard: require a valid reCAPTCHA token
+    if (!captchaToken) {
+      setErrors((prev) => ({ ...prev, submit: "Please complete the reCAPTCHA." }));
       return;
     }
+
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          name: fullName.trim(),
+          email: email.trim(),
+          password,
+          // In frontend-only mode we do NOT rely on this server-side,
+          // but we keep it here so enabling server verification later is trivial.
+          recaptchaToken: captchaToken,
+        }),
       });
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || "Signup failed");
 
-      // Some backends auto-login after register; check if that happened.
-      const me = await fetch(`/api/auth/me`, {
-        credentials: "include",
-        cache: "no-store",
-        headers: { "Cache-Control": "no-cache" },
-      }).then(r => r.json()).catch(() => ({}));
-
-      if (me?.ok || me?.email || me?.logged_in) {
-        // Already authenticated → continue to next (invite accept page).
-        window.location.replace(next);
-        return;
-      }
-
-      // Not logged in yet → bounce to login carrying next+email so flow resumes.
-      const q = new URLSearchParams({ next, email }).toString();
-      window.location.replace(`/login?${q}`);
+      navigate(next, { replace: true });
     } catch (err) {
-      setError(err.message);
+      setErrors({ submit: err.message || "Something went wrong." });
     } finally {
       setLoading(false);
     }
   };
 
+  // Google callback — send ID token to backend for verification
+  const handleGoogleSuccess = async (credential) => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ credential }), // backend verifies ID token
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Google sign-in failed");
+      navigate(next, { replace: true });
+    } catch (e) {
+      setErrors({ submit: e.message || "Google login failed" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleError = (e) => {
+    setErrors({ submit: e?.message || "Unable to initialize Google login." });
+  };
+console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
+
+  const canSubmit =
+    fullName.trim() &&
+    email.trim() &&
+    password &&
+    confirm &&
+    agree &&
+    !!captchaToken && // require captcha completed
+    !loading;
+
   return (
     <div className="min-h-screen w-full bg-blue-600 flex items-center justify-center px-4 py-10">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
         className="bg-white w-full max-w-lg rounded-2xl shadow-xl p-8 md:p-10"
       >
         <h1 className="text-3xl font-bold text-gray-900">Signup</h1>
 
-        <form onSubmit={onSubmit} className="mt-8 space-y-5">
-          {error ? (
-            <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{error}</div>
-          ) : null}
+        <form onSubmit={onSubmit} noValidate className="mt-8 space-y-5">
+          {errors.submit && (
+            <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{errors.submit}</div>
+          )}
 
+          {/* Full Name */}
+          <label className="block">
+            <span className="sr-only">Full Name</span>
+            <div className="relative">
+              <User className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
+              <input
+                type="text"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                onBlur={validate}
+                placeholder="Full name"
+                className={`w-full pl-10 pr-4 py-3 rounded-xl border ${
+                  errors.fullName ? "border-red-400" : "border-gray-300"
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
+              />
+            </div>
+            {errors.fullName && <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>}
+          </label>
+
+          {/* Email */}
           <label className="block">
             <span className="sr-only">Email</span>
             <div className="relative">
@@ -97,102 +230,142 @@ export default function Signup() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={validate}
                 placeholder="Email"
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400"
+                className={`w-full pl-10 pr-4 py-3 rounded-xl border ${
+                  errors.email ? "border-red-400" : "border-gray-300"
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
               />
             </div>
+            {errors.email && <p className="text-red-600 text-sm mt-1">{errors.email}</p>}
           </label>
 
+          {/* Password */}
           <label className="block">
-            <span className="sr-only">Create password</span>
+            <span className="sr-only">Password</span>
             <div className="relative">
               <Lock className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
-                type={show1 ? "text" : "password"}
+                type={showPw1 ? "text" : "password"}
                 required
+                minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Create password"
-                className="w-full pl-10 pr-11 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400"
+                onBlur={validate}
+                placeholder="Password (min 8 chars)"
+                className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
+                  errors.password ? "border-red-400" : "border-gray-300"
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
               />
               <button
                 type="button"
-                onClick={() => setShow1((s) => !s)}
-                aria-label={show1 ? "Hide password" : "Show password"}
+                onClick={() => setShowPw1((s) => !s)}
+                aria-label={showPw1 ? "Hide password" : "Show password"}
                 className="absolute right-3 top-2.5 p-1 text-gray-500 hover:text-gray-700"
               >
-                {show1 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPw1 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {errors.password && <p className="text-red-600 text-sm mt-1">{errors.password}</p>}
           </label>
 
+          {/* Confirm Password */}
           <label className="block">
-            <span className="sr-only">Confirm password</span>
+            <span className="sr-only">Confirm Password</span>
             <div className="relative">
               <Lock className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
-                type={show2 ? "text" : "password"}
+                type={showPw2 ? "text" : "password"}
                 required
+                minLength={8}
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
+                onBlur={validate}
                 placeholder="Confirm password"
-                className="w-full pl-10 pr-11 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400"
+                className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
+                  errors.confirm ? "border-red-400" : "border-gray-300"
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
               />
               <button
                 type="button"
-                onClick={() => setShow2((s) => !s)}
-                aria-label={show2 ? "Hide password" : "Show password"}
+                onClick={() => setShowPw2((s) => !s)}
+                aria-label={showPw2 ? "Hide password" : "Show password"}
                 className="absolute right-3 top-2.5 p-1 text-gray-500 hover:text-gray-700"
               >
-                {show2 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPw2 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {errors.confirm && <p className="text-red-600 text-sm mt-1">{errors.confirm}</p>}
           </label>
 
+          {/* Terms */}
+          <div className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
+            <input
+              id="agree"
+              type="checkbox"
+              checked={agree}
+              onChange={(e) => setAgree(e.target.checked)}
+              onBlur={validate}
+              className="mt-1.5 h-5 w-5 accent-blue-600"
+              required
+            />
+            <label htmlFor="agree" className="text-gray-700 text-sm">
+              I agree to the <a className="text-blue-600 hover:text-blue-700" href="#">Terms</a> and{" "}
+              <a className="text-blue-600 hover:text-blue-700" href="#">Privacy Policy</a>.
+            </label>
+          </div>
+          {errors.agree && <p className="text-red-600 text-sm -mt-2">{errors.agree}</p>}
+
+          {/* reCAPTCHA */}
+          <div className="mt-2">
+            <ReCAPTCHA
+              sitekey={import.meta.env.VITE_RECAPTCHA_SITE_KEY}
+              onChange={(val) => setCaptchaToken(val)}
+              onExpired={() => setCaptchaToken(null)}
+              onErrored={() => {
+                setCaptchaToken(null);
+                setErrors((prev) => ({
+                  ...prev,
+                  submit: "reCAPTCHA couldn’t load. Check your connection and try again.",
+                }));
+              }}
+              theme="light" // change to "dark" to match your UI
+            />
+          </div>
+
+          {/* Submit */}
           <button
             type="submit"
-            disabled={loading}
+            disabled={!canSubmit}
             className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition shadow-md disabled:opacity-60"
           >
             {loading ? "Creating account..." : "Signup"}
           </button>
 
+          {/* Divider */}
+          <div className="flex items-center gap-4 text-gray-400">
+            <div className="h-px bg-gray-200 flex-1" />
+            <span className="text-sm">Or</span>
+            <div className="h-px bg-gray-200 flex-1" />
+          </div>
+
+          {/* Google Login */}
+          <GoogleLogin onSuccess={handleGoogleSuccess} onError={handleGoogleError} />
+
+          {/* Login link */}
           <p className="text-center text-sm text-gray-600">
             Already have an account?{" "}
-            <Link to={`/login?next=${encodeURIComponent(next)}${email ? `&email=${encodeURIComponent(email)}` : ""}`} className="text-blue-600 hover:text-blue-700 font-medium">
+            <Link
+              to={`/login?next=${encodeURIComponent(next)}${
+                email ? `&email=${encodeURIComponent(email)}` : ""
+              }`}
+              className="text-blue-600 hover:text-blue-700 font-medium"
+            >
               Login
             </Link>
           </p>
-
-          <Divider text="Or" />
-
-          <div className="space-y-3">
-            <button
-              type="button"
-              className="w-full py-3 rounded-xl bg-[#4267B2] text-white font-semibold flex items-center justify-center gap-3 hover:brightness-95"
-            >
-              <FaFacebook className="text-xl" /> Login with Facebook
-            </button>
-            <button
-              type="button"
-              disabled
-              className="w-full py-3 rounded-xl bg-gray-100 text-gray-600 font-semibold flex items-center justify-center gap-3 cursor-not-allowed"
-            >
-              <FcGoogle className="text-xl" /> Login with Google
-            </button>
-          </div>
         </form>
       </motion.div>
-    </div>
-  );
-}
-
-function Divider({ text }) {
-  return (
-    <div className="flex items-center gap-4">
-      <span className="h-px flex-1 bg-gray-200" />
-      <span className="text-gray-400 text-sm">{text}</span>
-      <span className="h-px flex-1 bg-gray-200" />
     </div>
   );
 }
