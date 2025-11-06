@@ -3,16 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
 import { motion } from "framer-motion";
 import ReCAPTCHA from "react-google-recaptcha";
+import apiClient from "../services/api.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
-/** Google Login Button (Google Identity Services) */
 function GoogleLogin({ onSuccess, onError }) {
   const btnRef = useRef(null);
 
   useEffect(() => {
-    // Load the GIS SDK once
     const scriptId = "google-identity-services";
     if (!document.getElementById(scriptId)) {
       const s = document.createElement("script");
@@ -33,7 +32,7 @@ function GoogleLogin({ onSuccess, onError }) {
         window.google.accounts.id.initialize({
           client_id: GOOGLE_CLIENT_ID,
           callback: (response) => onSuccess?.(response.credential),
-          ux_mode: "popup", // or "redirect"
+          ux_mode: "popup",
           auto_select: false,
           context: "signup",
         });
@@ -42,7 +41,7 @@ function GoogleLogin({ onSuccess, onError }) {
           size: "large",
           type: "standard",
           shape: "pill",
-          text: "continue_with", // "signup_with" also works
+          text: "continue_with",
           logo_alignment: "left",
           width: "100%",
         });
@@ -52,7 +51,6 @@ function GoogleLogin({ onSuccess, onError }) {
     }
   }, [onSuccess, onError]);
 
-  // Fallback button if render fails (rare)
   return (
     <div ref={btnRef} className="w-full">
       <button
@@ -69,37 +67,31 @@ function GoogleLogin({ onSuccess, onError }) {
 export default function Signup() {
   const navigate = useNavigate();
 
-  // form state
   const [fullName, setFullName] = useState("");
-  const [email,    setEmail]    = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirm,  setConfirm]  = useState("");
-  const [agree,    setAgree]    = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [agree, setAgree] = useState(false);
 
-  // UI state
   const [showPw1, setShowPw1] = useState(false);
   const [showPw2, setShowPw2] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [errors,  setErrors]  = useState({});
-
-  // reCAPTCHA (frontend-only)
+  const [errors, setErrors] = useState({});
   const [captchaToken, setCaptchaToken] = useState(null);
+  const [success, setSuccess] = useState(false);
 
-  // Optional: honor ?next=/path so flow resumes post-auth
   const next = useMemo(() => {
     const p = new URLSearchParams(window.location.search);
     const n = p.get("next");
     return n && n.startsWith("/") ? n : "/";
   }, []);
 
-  // Optional: prefill email from ?email=
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const e = p.get("email");
     if (e) setEmail(e);
   }, []);
 
-  // basic client-side validation
   const validate = () => {
     const e = {};
     if (!fullName.trim()) e.fullName = "Full name is required.";
@@ -118,32 +110,32 @@ export default function Signup() {
     ev.preventDefault();
     if (!validate()) return;
 
-    // Frontend-only guard: require a valid reCAPTCHA token
     if (!captchaToken) {
       setErrors((prev) => ({ ...prev, submit: "Please complete the reCAPTCHA." }));
       return;
     }
 
+    const payload = {
+      name: fullName.trim(),
+      email: email.trim(),
+      password: password,
+      confirm_password: confirm,
+      terms_accepted: agree,
+    };
+
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name: fullName.trim(),
-          email: email.trim(),
-          password,
-          // In frontend-only mode we do NOT rely on this server-side,
-          // but we keep it here so enabling server verification later is trivial.
-          recaptchaToken: captchaToken,
-        }),
-      });
+      const res = await apiClient.post("/register", payload);
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Signup failed");
+      if (!res?.data?.message && res.status !== 200) {
+        throw new Error("Signup failed");
+      }
 
-      navigate(next, { replace: true });
+      setSuccess(true);
+      setErrors({});
+      setTimeout(() => {
+        navigate("/login", { replace: true });
+      }, 3000);
     } catch (err) {
       setErrors({ submit: err.message || "Something went wrong." });
     } finally {
@@ -151,7 +143,6 @@ export default function Signup() {
     }
   };
 
-  // Google callback — send ID token to backend for verification
   const handleGoogleSuccess = async (credential) => {
     try {
       setLoading(true);
@@ -159,7 +150,7 @@ export default function Signup() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ credential }), // backend verifies ID token
+        body: JSON.stringify({ credential }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || "Google sign-in failed");
@@ -174,7 +165,6 @@ export default function Signup() {
   const handleGoogleError = (e) => {
     setErrors({ submit: e?.message || "Unable to initialize Google login." });
   };
-console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
 
   const canSubmit =
     fullName.trim() &&
@@ -182,7 +172,7 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
     password &&
     confirm &&
     agree &&
-    !!captchaToken && // require captcha completed
+    !!captchaToken &&
     !loading;
 
   return (
@@ -200,9 +190,14 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
             <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{errors.submit}</div>
           )}
 
+          {success && (
+            <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm">
+              Account created successfully! Redirecting to login...
+            </div>
+          )}
+
           {/* Full Name */}
           <label className="block">
-            <span className="sr-only">Full Name</span>
             <div className="relative">
               <User className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
@@ -214,7 +209,7 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
                 placeholder="Full name"
                 className={`w-full pl-10 pr-4 py-3 rounded-xl border ${
                   errors.fullName ? "border-red-400" : "border-gray-300"
-                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
             </div>
             {errors.fullName && <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>}
@@ -222,7 +217,6 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
 
           {/* Email */}
           <label className="block">
-            <span className="sr-only">Email</span>
             <div className="relative">
               <Mail className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
@@ -234,7 +228,7 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
                 placeholder="Email"
                 className={`w-full pl-10 pr-4 py-3 rounded-xl border ${
                   errors.email ? "border-red-400" : "border-gray-300"
-                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
             </div>
             {errors.email && <p className="text-red-600 text-sm mt-1">{errors.email}</p>}
@@ -242,7 +236,6 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
 
           {/* Password */}
           <label className="block">
-            <span className="sr-only">Password</span>
             <div className="relative">
               <Lock className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
@@ -255,13 +248,12 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
                 placeholder="Password (min 8 chars)"
                 className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
                   errors.password ? "border-red-400" : "border-gray-300"
-                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
               <button
                 type="button"
                 onClick={() => setShowPw1((s) => !s)}
-                aria-label={showPw1 ? "Hide password" : "Show password"}
-                className="absolute right-3 top-2.5 p-1 text-gray-500 hover:text-gray-700"
+                className="absolute right-3 top-2.5 text-gray-500 hover:text-gray-700"
               >
                 {showPw1 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -271,7 +263,6 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
 
           {/* Confirm Password */}
           <label className="block">
-            <span className="sr-only">Confirm Password</span>
             <div className="relative">
               <Lock className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
               <input
@@ -284,13 +275,12 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
                 placeholder="Confirm password"
                 className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
                   errors.confirm ? "border-red-400" : "border-gray-300"
-                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 text-gray-900 placeholder:text-gray-400`}
+                } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
               <button
                 type="button"
                 onClick={() => setShowPw2((s) => !s)}
-                aria-label={showPw2 ? "Hide password" : "Show password"}
-                className="absolute right-3 top-2.5 p-1 text-gray-500 hover:text-gray-700"
+                className="absolute right-3 top-2.5 text-gray-500 hover:text-gray-700"
               >
                 {showPw2 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -329,7 +319,7 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
                   submit: "reCAPTCHA couldn’t load. Check your connection and try again.",
                 }));
               }}
-              theme="light" // change to "dark" to match your UI
+              theme="light"
             />
           </div>
 
@@ -342,17 +332,14 @@ console.log(import.meta.env.VITE_RECAPTCHA_SITE_KEYpytho);
             {loading ? "Creating account..." : "Signup"}
           </button>
 
-          {/* Divider */}
           <div className="flex items-center gap-4 text-gray-400">
             <div className="h-px bg-gray-200 flex-1" />
             <span className="text-sm">Or</span>
             <div className="h-px bg-gray-200 flex-1" />
           </div>
 
-          {/* Google Login */}
           <GoogleLogin onSuccess={handleGoogleSuccess} onError={handleGoogleError} />
 
-          {/* Login link */}
           <p className="text-center text-sm text-gray-600">
             Already have an account?{" "}
             <Link

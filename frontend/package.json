@@ -1,7 +1,8 @@
 {
   "name": "ai-file-assistant-ui",
   "version": "1.0.0",
-  "proxy": "http://localhost:5000",
+  "type": "module",
+  "proxy": "http://127.0.0.1:8000",
   "scripts": {
     "frontend": "vite",
     "backend": "cd ../backend && python app.py",
@@ -12,6 +13,7 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "@tailwindcss/typography": "^0.5.16",
+    "axios": "^1.13.2",
     "framer-motion": "^10.18.0",
     "lucide-react": "^0.525.0",
     "react": "^18.2.0",

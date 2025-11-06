@@ -25,12 +25,14 @@ import StaffLogin from "./pages/staff/StaffLogin";
 import Pricing from "./pages/Pricing.jsx";
 import Workspace from "./components/Workspace.jsx";
 import WorkspaceAccept from "./pages/WorkspaceAccept";
+import PasswordRequest from "./pages/PasswordRequest.jsx";
 
 // Pages
 import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import TrialEnded from "./pages/TrialEnded.jsx";
+import ConfirmPassword from "./pages/ConfirmPassword.jsx";
 
 /* ───────────────────────── helpers ───────────────────────── */
 async function apiFetch(url, options = {}) {
@@ -639,6 +641,7 @@ export default function App() {
           }
         />
 
+
         {/* Main assistant */}
         <Route
           path="/"
@@ -768,6 +771,8 @@ export default function App() {
         {/* Fallbacks */}
         <Route path="/admin" element={<Navigate to="/admin/upload" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/forgot-password" element={<PasswordRequest />} />
+        <Route path="/confirm-password" element={<ConfirmPassword />} />
       </Routes>
 
       {/* Global connection modal host */}
@@ -778,6 +783,8 @@ export default function App() {
           onClose={() => setConnOpen(false)}
         />
       )}
+      
     </Router>
+    
   );
 }
