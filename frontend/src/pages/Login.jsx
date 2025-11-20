@@ -54,24 +54,7 @@ export default function Login() {
   };
 
   const onForgot = async () => {
-    if (!email) {
-      setError("Enter your email first to receive a reset link.");
-      return;
-    }
-    try {
-      setError("");
-      const res = await fetch(`${API_BASE}/api/auth/forgot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        cache: "no-store",
-        body: JSON.stringify({ email }),
-      });
-      if (!res.ok) throw new Error("Could not send reset link");
-      alert("If this email exists, a reset link has been sent.");
-    } catch (e) {
-      setError(e.message);
-    }
+    window.location.href = "/forgot-password";
   };
 
   return (

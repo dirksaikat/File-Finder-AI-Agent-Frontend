@@ -13,18 +13,6 @@ function GoogleLogin({ onSuccess, onError }) {
 
   useEffect(() => {
     const scriptId = "google-identity-services";
-    if (!document.getElementById(scriptId)) {
-      const s = document.createElement("script");
-      s.src = "https://accounts.google.com/gsi/client";
-      s.async = true;
-      s.defer = true;
-      s.id = scriptId;
-      s.onload = init;
-      s.onerror = () => onError?.(new Error("Failed to load Google SDK"));
-      document.head.appendChild(s);
-    } else {
-      init();
-    }
 
     function init() {
       if (!window.google || !btnRef.current) return;
@@ -49,10 +37,24 @@ function GoogleLogin({ onSuccess, onError }) {
         onError?.(e);
       }
     }
+
+    if (!document.getElementById(scriptId)) {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true;
+      s.defer = true;
+      s.id = scriptId;
+      s.onload = init;
+      s.onerror = () => onError?.(new Error("Failed to load Google SDK"));
+      document.head.appendChild(s);
+    } else {
+      init();
+    }
   }, [onSuccess, onError]);
 
   return (
     <div ref={btnRef} className="w-full">
+      {/* Fallback button (if Google script fails) */}
       <button
         type="button"
         onClick={() => onError?.(new Error("Google button not initialized"))}
@@ -80,12 +82,19 @@ export default function Signup() {
   const [captchaToken, setCaptchaToken] = useState(null);
   const [success, setSuccess] = useState(false);
 
+  // 🔒 Block clipboard actions (copy/cut/paste/drag-drop) for password fields
+  const handleBlockClipboard = (e) => {
+    e.preventDefault();
+  };
+
+  // Optional "next" redirect after login/signup
   const next = useMemo(() => {
     const p = new URLSearchParams(window.location.search);
     const n = p.get("next");
     return n && n.startsWith("/") ? n : "/";
   }, []);
 
+  // If email is passed in query (?email=...), prefill it
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const e = p.get("email");
@@ -94,14 +103,21 @@ export default function Signup() {
 
   const validate = () => {
     const e = {};
+
     if (!fullName.trim()) e.fullName = "Full name is required.";
     if (!email.trim()) e.email = "Email is required.";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Enter a valid email.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      e.email = "Enter a valid email.";
+
     if (!password) e.password = "Password is required.";
-    else if (password.length < 8) e.password = "Use at least 8 characters.";
+    else if (password.length < 8)
+      e.password = "Use at least 8 characters.";
+
     if (!confirm) e.confirm = "Please confirm your password.";
-    else if (confirm !== password) e.confirm = "Passwords do not match.";
+    else if (confirm !== password) e.confirm = "Password does not match.";
+
     if (!agree) e.agree = "You must accept the terms to continue.";
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -111,7 +127,10 @@ export default function Signup() {
     if (!validate()) return;
 
     if (!captchaToken) {
-      setErrors((prev) => ({ ...prev, submit: "Please complete the reCAPTCHA." }));
+      setErrors((prev) => ({
+        ...prev,
+        submit: "Please complete the reCAPTCHA.",
+      }));
       return;
     }
 
@@ -133,11 +152,54 @@ export default function Signup() {
 
       setSuccess(true);
       setErrors({});
+
+      // 🔴 IMPORTANT PART: pass email to email verification page
       setTimeout(() => {
-        navigate("/login", { replace: true });
+        navigate(
+          `/email-verification?email=${encodeURIComponent(email.trim())}`,
+          { replace: true }
+        );
       }, 3000);
     } catch (err) {
-      setErrors({ submit: err.message || "Something went wrong." });
+      console.error(err);
+
+      const newErrors = {};
+      const apiData = err?.response?.data;
+
+      if (apiData) {
+        if (apiData.errors?.email) {
+          newErrors.email = apiData.errors.email;
+        } else {
+          const msg =
+            apiData.message || apiData.error || apiData.detail || apiData;
+          if (typeof msg === "string") {
+            const lower = msg.toLowerCase();
+            if (
+              lower.includes("email") &&
+              (lower.includes("already") ||
+                lower.includes("taken") ||
+                lower.includes("exists"))
+            ) {
+              newErrors.email = "Your email is already taken.";
+            } else {
+              newErrors.submit = msg;
+            }
+          }
+        }
+      }
+
+      if (
+        !newErrors.email &&
+        (err?.response?.status === 400 || err?.response?.status === 409)
+      ) {
+        newErrors.email = "Your email is already taken.";
+      }
+
+      if (!newErrors.email && !newErrors.submit) {
+        newErrors.submit = err.message || "Something went wrong.";
+      }
+
+      setErrors(newErrors);
     } finally {
       setLoading(false);
     }
@@ -187,12 +249,15 @@ export default function Signup() {
 
         <form onSubmit={onSubmit} noValidate className="mt-8 space-y-5">
           {errors.submit && (
-            <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{errors.submit}</div>
+            <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">
+              {errors.submit}
+            </div>
           )}
 
           {success && (
             <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm">
-              Account created successfully! Redirecting to login...
+              {/* ✅ Updated success message */}
+              You've successfully signed up
             </div>
           )}
 
@@ -212,14 +277,16 @@ export default function Signup() {
                 } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
             </div>
-            {errors.fullName && <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>}
+            {errors.fullName && (
+              <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>
+            )}
           </label>
 
           {/* Email */}
           <label className="block">
             <div className="relative">
               <Mail className="w-5 h-5 absolute left-3 top-3.5 text-gray-400" />
-              <input
+            <input
                 type="email"
                 required
                 value={email}
@@ -231,7 +298,9 @@ export default function Signup() {
                 } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
               />
             </div>
-            {errors.email && <p className="text-red-600 text-sm mt-1">{errors.email}</p>}
+            {errors.email && (
+              <p className="text-red-600 text-sm mt-1">{errors.email}</p>
+            )}
           </label>
 
           {/* Password */}
@@ -249,16 +318,27 @@ export default function Signup() {
                 className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
                   errors.password ? "border-red-400" : "border-gray-300"
                 } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
+                onCopy={handleBlockClipboard}
+                onCut={handleBlockClipboard}
+                onPaste={handleBlockClipboard}
+                onDrop={handleBlockClipboard}
+                onDragOver={handleBlockClipboard}
               />
               <button
                 type="button"
                 onClick={() => setShowPw1((s) => !s)}
                 className="absolute right-3 top-2.5 text-gray-500 hover:text-gray-700"
               >
-                {showPw1 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPw1 ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
-            {errors.password && <p className="text-red-600 text-sm mt-1">{errors.password}</p>}
+            {errors.password && (
+              <p className="text-red-600 text-sm mt-1">{errors.password}</p>
+            )}
           </label>
 
           {/* Confirm Password */}
@@ -276,16 +356,28 @@ export default function Signup() {
                 className={`w-full pl-10 pr-11 py-3 rounded-xl border ${
                   errors.confirm ? "border-red-400" : "border-gray-300"
                 } focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500`}
+                // 🔒 User MUST type confirm password manually
+                onCopy={handleBlockClipboard}
+                onCut={handleBlockClipboard}
+                onPaste={handleBlockClipboard}
+                onDrop={handleBlockClipboard}
+                onDragOver={handleBlockClipboard}
               />
               <button
                 type="button"
                 onClick={() => setShowPw2((s) => !s)}
                 className="absolute right-3 top-2.5 text-gray-500 hover:text-gray-700"
               >
-                {showPw2 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPw2 ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
-            {errors.confirm && <p className="text-red-600 text-sm mt-1">{errors.confirm}</p>}
+            {errors.confirm && (
+              <p className="text-red-600 text-sm mt-1">{errors.confirm}</p>
+            )}
           </label>
 
           {/* Terms */}
@@ -300,11 +392,20 @@ export default function Signup() {
               required
             />
             <label htmlFor="agree" className="text-gray-700 text-sm">
-              I agree to the <a className="text-blue-600 hover:text-blue-700" href="#">Terms</a> and{" "}
-              <a className="text-blue-600 hover:text-blue-700" href="#">Privacy Policy</a>.
+              I agree to the{" "}
+              <a className="text-blue-600 hover:text-blue-700" href="#">
+                Terms
+              </a>{" "}
+              and{" "}
+              <a className="text-blue-600 hover:text-blue-700" href="#">
+                Privacy Policy
+              </a>
+              .
             </label>
           </div>
-          {errors.agree && <p className="text-red-600 text-sm -mt-2">{errors.agree}</p>}
+          {errors.agree && (
+            <p className="text-red-600 text-sm -mt-2">{errors.agree}</p>
+          )}
 
           {/* reCAPTCHA */}
           <div className="mt-2">
@@ -316,7 +417,8 @@ export default function Signup() {
                 setCaptchaToken(null);
                 setErrors((prev) => ({
                   ...prev,
-                  submit: "reCAPTCHA couldn’t load. Check your connection and try again.",
+                  submit:
+                    "reCAPTCHA couldn’t load. Check your connection and try again.",
                 }));
               }}
               theme="light"
@@ -338,7 +440,10 @@ export default function Signup() {
             <div className="h-px bg-gray-200 flex-1" />
           </div>
 
-          <GoogleLogin onSuccess={handleGoogleSuccess} onError={handleGoogleError} />
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={handleGoogleError}
+          />
 
           <p className="text-center text-sm text-gray-600">
             Already have an account?{" "}

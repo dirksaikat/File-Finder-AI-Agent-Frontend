@@ -33,6 +33,7 @@ import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import TrialEnded from "./pages/TrialEnded.jsx";
 import ConfirmPassword from "./pages/ConfirmPassword.jsx";
+import EmailVerify from "./pages/EmailVerify.jsx";
 
 /* ───────────────────────── helpers ───────────────────────── */
 async function apiFetch(url, options = {}) {
@@ -773,6 +774,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
         <Route path="/forgot-password" element={<PasswordRequest />} />
         <Route path="/confirm-password" element={<ConfirmPassword />} />
+        <Route path="/email-verification" element={<EmailVerify />} />
       </Routes>
 
       {/* Global connection modal host */}
